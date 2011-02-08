@@ -4,7 +4,7 @@ require 5.008;
 
 WriteMakefile
   ( NAME        => 'Geo::Calc'
-  , VERSION     => '0.01'
+  , VERSION     => '0.02'
   , PREREQ_PM   =>
      { Test::More    => 0.47
      , Math::Trig    => 1.04

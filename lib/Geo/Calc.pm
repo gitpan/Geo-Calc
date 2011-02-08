@@ -5,7 +5,7 @@
 package Geo::Calc;
 
 use vars '$VERSION';
-$VERSION = '0.01';
+$VERSION = '0.02';
 
 use Moose;
 use MooseX::FollowPBP;
@@ -13,6 +13,66 @@ use MooseX::Method::Signatures;
 
 use Math::Trig qw(:pi asin acos tan deg2rad rad2deg);
 use Math::BigFloat;
+
+=head1 NAME
+
+Geo::Calc - simple geo calculator for points and distances
+
+=head1 SYNOPSIS
+
+ use Geo::Calc;
+
+ my $gc            = Geo::Calc->new( lat => 40.417875, lon => -3.710205 );
+ my $distance      = $gc->distance_to( { lat => 40.422371, lon => -3.704298 }, -6 );
+ my $brng          = $gc->bearing_to( { lat => 40.422371, lon => -3.704298 }, -6 );
+ my $f_brng        = $gc->final_bearing_to( { lat => 40.422371, lon => -3.704298 }, -6 );
+ my $midpoint      = $gc->midpoint_to( { lat => 40.422371, lon => -3.704298 }, -6 );
+ my $destination   = $gc->destination_point( 90, 1, -6 ); # distance in km
+ my $bbox          = $gc->boundry_box( 3, 4, -6 ); # in km
+ my $r_distance    = $gc->rhumb_distance_to( { lat => 40.422371, lon => -3.704298 }, -6 );
+ my $r_brng        = $gc->rhumb_bearing_to( { lat => 40.422371, lon => -3.704298 }, -6 );
+ my $r_destination = $gc->rhumb_destination_point( 30, 1, -6 );
+ my $point         = $gc->intersection( 90, { lat => 40.422371, lon => -3.704298 }, 180, -6 );
+
+=head1 DESCRIPTION
+
+ C<Geo::Calc> implements a variety of calculations for latitude/longitude points
+
+ All these formulare are for calculations on the basis of a spherical earth
+(ignoring ellipsoidal effects) which is accurate enough* for most purposes.
+
+ [ In fact, the earth is very slightly ellipsoidal; using a spherical model
+gives errors typically up to 0.3% ].
+
+=head1 Mail::Sender->new()
+
+ $gc = Geo::Calc->new( lat => 40.417875, lon => -3.710205 ); # Somewhere in Madrid
+ $gc = Geo::Calc->new( lat => 51.503269, lon => 0 ); # The O2 Arena in London
+
+Creates a new Geo::Calc object from a latitude and longitude. The default
+precision is -6 for all functions meaning that 6 deciamls
+
+Returns ref to a Geo::Calc object.
+
+=head2 Parameters
+
+=over 4
+
+=item lat
+
+C<>=> latitude of the point ( required )
+
+=item lon
+
+C<>=> longitude of the point ( required )
+
+=item radius
+
+C<>=> earth radius in km ( defaults to 6371 )
+
+=back
+
+=cut
 
 has 'lat' => (
     is       => 'ro',
@@ -32,18 +92,27 @@ has 'radius' => (
     default  => '6371',
 );
 
-=head2 Geo::Calc - simple calculations for geo coordinates
-    my $gc = Geo::Calc->new( lat => $latitude, lon => $longitude );
-    my $gc = Geo::Calc->new( lat => $latitude, lon => $longitude, radius => 6371 );
-=cut
+=head1 METHODS
 
-=head2 distance_to - Returns the distance from this point to the supplied point,
-in km (using Haversine formula)
+=head2 distance_to
 
-from: Haversine formula - R. W. Sinnott, "Virtues of the Haversine",
-        Sky and Telescope, vol 68, no 2, 1984
-    my $distance = $gc->distance_to( $point, $precision );
-    my $distance = $gc->distance_to( { lat => 40.422371, lon => -3.704298 }, -6 );
+ $gc->distance_to( $point, $precision )
+ $gc->distance_to( { lat => 40.422371, lon => -3.704298 }, -6 )
+
+This uses the "haversine" formula to calculate great-circle distances between
+the two points - that is, the shortest distance over the earth's surface - 
+giving an `as-the-crow-flies` distance between the points (ignoring any hills!)
+
+The haversine formula `remains particularly well-conditioned for numerical
+computation even at small distances` - unlike calculations based on the spherical
+law of cosines. It was published by R W Sinnott in Sky and Telescope, 1984,
+though known about for much longer by navigators. (For the curious, c is the
+angular distance in radians, and a is the square of half the chord length between
+the points).
+
+Returns with the distance using the precision defined or -6
+( -6 = 6 decimals after the dot ( eg 4.000001 ) )
+
 =cut
 sub distance_to {
     my ( $self, $point, $precision ) = @_;
@@ -60,11 +129,26 @@ sub distance_to {
     return $self->_precision( $d, $precision );
 }
 
-=head2 bearing_to - Returns the (initial) bearing from this point to the supplied
-point, in degrees
-    see http://williams.best.vwh.net/avform.htm#Crs
-    my $brng = $gc->bearing_to( $point, $precision );
-    my $brng = $gc->bearing_to( { lat => 40.422371, lon => -3.704298 }, -6 );
+=head2 bearing_to
+
+ $gc->bearing_to( $point, $precision );
+ $gc->bearing_to( { lat => 40.422371, lon => -3.704298 }, -6 );
+
+In general, your current heading will vary as you follow a great circle path
+(orthodrome); the final heading will differ from the initial heading by varying
+degrees according to distance and latitude (if you were to go from say 35N,45E
+(Baghdad) to 35N,135E (Osaka), you would start on a heading of 60 and end up on
+a heading of 120!).
+
+This formula is for the initial bearing (sometimes referred to as forward
+azimuth) which if followed in a straight line along a great-circle arc will take
+you from the start point to the end point
+
+Returns the (initial) bearing from this point to the supplied point, in degrees
+with the specified pricision
+
+see http://williams.best.vwh.net/avform.htm#Crs
+
 =cut
 sub bearing_to {
     my ( $self, $point, $precision ) = @_;
@@ -79,11 +163,15 @@ sub bearing_to {
     return $self->_ib_precision( rad2deg( $brng ), $precision );
 }
 
-=head2 final_bearing_to - Returns final bearing arriving at supplied destination
-point from this point; the final bearing will differ from the initial bearing
-by varying degrees according to distance and latitude
-    my $f_brng = $gc->final_bearing_to( $point, $precision );
-    my $f_brng = $gc->final_bearing_to( { lat => 40.422371, lon => -3.704298 }, -6 );
+=head2 final_bearing_to
+
+ my $f_brng = $gc->final_bearing_to( $point, $precision );
+ my $f_brng = $gc->final_bearing_to( { lat => 40.422371, lon => -3.704298 }, -6 );
+
+Returns final bearing arriving at supplied destination point from this point;
+the final bearing will differ from the initial bearing by varying degrees
+according to distance and latitude
+
 =cut
 sub final_bearing_to {
     my ( $self, $point, $precision ) = @_;
@@ -98,11 +186,16 @@ sub final_bearing_to {
     return $self->_fb_precision( rad2deg( $brng ), $precision );
 }
 
-=head2 midpoint_to - Returns the midpoint between this point and the supplied
-point.
-    see http://mathforum.org/library/drmath/view/51822.html for derivation
-    my $midpoint = $gc->midpoint_to( $point, $precision );
-    my $midpoint = $gc->midpoint_to( { lat => 40.422371, lon => -3.704298 }, -6 );
+=head2 midpoint_to
+
+ $gc->midpoint_to( $point, $precision );
+ $gc->midpoint_to( { lat => 40.422371, lon => -3.704298 }, -6 );
+
+Returns the midpoint along a great circle path between the initial point and
+the supplied point.
+
+see http://mathforum.org/library/drmath/view/51822.html for derivation
+
 =cut
 sub midpoint_to {
     my ( $self, $point, $precision ) = @_;
@@ -124,12 +217,17 @@ sub midpoint_to {
     return { lat => $self->_precision( rad2deg($lat3), $precision ), lon => $self->_precision( rad2deg($lon3), $precision ) };
 }
 
-=head2 destination_point - Returns the destination point from this point having
-travelled the given distance (in km) on the given initial bearing (bearing may
-vary before destination is reached)
-    see http://williams.best.vwh.net/avform.htm#LL
-    my $destination = $gc->destination_point( $bearing, $distance, $precision );
-    my $destination = $gc->destination_point( 90, 1, -6 ); # distance in km
+=head2 destination_point
+
+ $gc->destination_point( $bearing, $distance, $precision );
+ $gc->destination_point( 90, 1, -6 ); # distance in km
+
+Returns the destination point from this point having travelled the given
+distance (in km) on the given initial bearing (bearing may vary before
+destination is reached)
+
+see http://williams.best.vwh.net/avform.htm#LL
+
 =cut
 sub destination_point {
     my ( $self, $brng, $dist, $precision ) = @_;
@@ -150,10 +248,14 @@ sub destination_point {
     return { lat => $self->_precision( rad2deg($lat2), $precision ), lon => $self->_precision( rad2deg($lon2), $precision ) };
 }
 
-=head2 boundry_box - Returns the boundry box min/max having the initial point
-defined as the center of the boundry box, given the widht and height
-    my $bbox = $gc->boundry_box( $width, $height, $precision ); # in km
-    my $bbox = $gc->boundry_box( 3, 4, -6 ); # in km
+=head2 boundry_box
+
+ $gc->boundry_box( $width, $height, $precision ); # in km
+ $gc->boundry_box( 3, 4, -6 ); # in km
+
+Returns the boundry box min/max having the initial point defined as the center
+of the boundry box, given the widht and height
+
 =cut
 sub boundry_box {
     my ( $self, $width, $height, $precision ) = @_;
@@ -172,11 +274,30 @@ sub boundry_box {
     };
 }
 
-=head2 rhumb_distance_to - Returns the distance from this point to the supplied
-point, in km, travelling along a rhumb line
-    see http://williams.best.vwh.net/avform.htm#Rhumb
-    my $r_distance = $gc->rhumb_distance_to( $point, $precision );
-    my $r_distance = $gc->rhumb_distance_to( { lat => 40.422371, lon => -3.704298 }, -6 );
+=head2 rhumb_distance_to
+
+ $gc->rhumb_distance_to( $point, $precision );
+ $gc->rhumb_distance_to( { lat => 40.422371, lon => -3.704298 }, -6 );
+
+Returns the distance from this point to the supplied point, in km, travelling
+along a rhumb line.
+
+A 'rhumb line' (or loxodrome) is a path of constant bearing, which crosses all
+meridians at the same angle.
+
+Sailors used to (and sometimes still) navigate along rhumb lines since it is
+easier to follow a constant compass bearing than to be continually adjusting
+the bearing, as is needed to follow a great circle. Rhumb lines are straight
+lines on a Mercator Projection map (also helpful for navigation).
+
+Rhumb lines are generally longer than great-circle (orthodrome) routes. For
+instance, London to New York is 4% longer along a rhumb line than along a
+great circle . important for aviation fuel, but not particularly to sailing
+vessels. New York to Beijing . close to the most extreme example possible
+(though not sailable!) . is 30% longer along a rhumb line.
+
+see http://williams.best.vwh.net/avform.htm#Rhumb
+
 =cut
 sub rhumb_distance_to {
     my ( $self, $point, $precision ) = @_;
@@ -196,10 +317,14 @@ sub rhumb_distance_to {
     return $self->_precision( $dist, $precision );
 }
 
-=head2 rhumb_bearing_to - Returns the bearing from this point to the supplied
-point along a rhumb line, in degrees
-    my $r_brng = $gc->rhumb_bearing_to( $point, $precision );
-    my $r_brng = $gc->rhumb_bearing_to( { lat => 40.422371, lon => -3.704298 }, -6 );
+=head2 rhumb_bearing_to
+
+ $gc->rhumb_bearing_to( $point, $precision );
+ $gc->rhumb_bearing_to( { lat => 40.422371, lon => -3.704298 }, -6 );
+
+Returns the bearing from this point to the supplied point along a rhumb line,
+in degrees
+
 =cut
 sub rhumb_bearing_to {
     my ( $self, $point, $precision ) = @_;
@@ -218,11 +343,14 @@ sub rhumb_bearing_to {
     return $self->_ib_precision( rad2deg( atan2( $dlon, $dphi ) ), $precision );
 }
 
-=head2 rhumb_destination_point - Returns the destination point from this point
-having travelled the given distance (in km) on the given bearing along a rhumb
-line
-    my $r_destination = $gc->rhumb_destination_point( $brng, $distance, $precision );
-    my $r_destination = $gc->rhumb_destination_point( 30, 1, -6 );
+=head2 rhumb_destination_point
+
+ $gc->rhumb_destination_point( $brng, $distance, $precision );
+ $gc->rhumb_destination_point( 30, 1, -6 );
+
+Returns the destination point from this point having travelled the given distance
+(in km) on the given bearing along a rhumb line.
+
 =cut
 sub rhumb_destination_point {
     my ( $self, $brng, $dist, $precision ) = @_;
@@ -250,11 +378,15 @@ sub rhumb_destination_point {
 }
 
 
-=head2 intersection - Returns the point of intersection of two paths defined
-by point and bearing
-    see http://williams.best.vwh.net/avform.htm#Intersection
-    my $point = $gc->intersection( $brng1, $point, $brng2, $precision );
-    my $point = $gc->intersection( 90, { lat => 40.422371, lon => -3.704298 }, 180, -6 );
+=head2 intersection
+
+ $gc->intersection( $brng1, $point, $brng2, $precision );
+ $gc->intersection( 90, { lat => 40.422371, lon => -3.704298 }, 180, -6 );
+
+Returns the point of intersection of two paths defined by point and bearing
+
+see http://williams.best.vwh.net/avform.htm#Intersection
+
 =cut
 sub intersection {
     my ( $self, $brng1, $point, $brng2, $precision ) = @_;

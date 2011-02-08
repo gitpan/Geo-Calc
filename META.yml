@@ -1,19 +1,18 @@
 --- #YAML:1.0
 name:                Geo-Calc
-version:             0.01
+version:             0.02
 abstract:            Geographical Calc
 license:             perl
-author:              
-    - Sorin Pop
+author:              Sorin Pop
 generated_by:        ExtUtils::MakeMaker version 6.42
 distribution_type:   module
 requires:
     Math::Trig:                    1.04
     Test::More:                    0.47
     Moose:                         1.19
-    MooseX::FollowPBP              0.04
-    MooseX::Method::Signatures     0.36
-    Math::BigFloat                 1.60
+    MooseX::FollowPBP:             0.04
+    MooseX::Method::Signatures:    0.36
+    Math::BigFloat:                1.60
 meta-spec:
     url:     http://module-build.sourceforge.net/META-spec-v1.3.html
     version: 1.3
