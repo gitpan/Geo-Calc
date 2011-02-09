@@ -16,7 +16,7 @@ my $gc = Geo::Calc->new( lat => 40.417875, lon => -3.710205 );
 
 is_deeply( $gc->boundry_box( 1, 1, -6 ), { 'lat_max' => '40.413378', 'lon_max' => '-3.704299', 'lon_min' => '-3.716112', 'lat_min' => '40.422371' }, 'boundry box' );
 
-is( $gc->distance_to( { lat => 40.422371, lon => -3.704298 }, -6 ), 0.707106, 'distance' );
+is( $gc->distance_to( { lat => 40.422371, lon => -3.704298 } ), 0.707106, 'distance' );
 
 is( $gc->rhumb_distance_to( { lat => 40.422371, lon => -3.704298 }, -6 ), 0.707095, 'rhumb distance' );
 

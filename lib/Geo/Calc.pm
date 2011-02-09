@@ -5,7 +5,7 @@
 package Geo::Calc;
 
 use vars '$VERSION';
-$VERSION = '0.02';
+$VERSION = '0.03';
 
 use Moose;
 use MooseX::FollowPBP;
@@ -44,7 +44,7 @@ Geo::Calc - simple geo calculator for points and distances
  [ In fact, the earth is very slightly ellipsoidal; using a spherical model
 gives errors typically up to 0.3% ].
 
-=head1 Mail::Sender->new()
+=head1 Geo::Calc->new()
 
  $gc = Geo::Calc->new( lat => 40.417875, lon => -3.710205 ); # Somewhere in Madrid
  $gc = Geo::Calc->new( lat => 51.503269, lon => 0 ); # The O2 Arena in London
@@ -114,10 +114,8 @@ Returns with the distance using the precision defined or -6
 ( -6 = 6 decimals after the dot ( eg 4.000001 ) )
 
 =cut
-sub distance_to {
-    my ( $self, $point, $precision ) = @_;
 
-    $precision ||= -6;
+method distance_to( HashRef[Num] $point!, Int $precision? = -6 ) returns (Num) {
     my $lat1 = deg2rad( $self->get_lat() );
     my $lon1 = deg2rad( $self->get_lon() );
     my $lat2 = deg2rad( $point->{lat} );
@@ -150,10 +148,8 @@ with the specified pricision
 see http://williams.best.vwh.net/avform.htm#Crs
 
 =cut
-sub bearing_to {
-    my ( $self, $point, $precision ) = @_;
 
-    $precision ||= -6;
+method bearing_to( HashRef[Num] $point!, Int $precision? = -6 ) returns (Num) {
     my $lat1 = deg2rad( $self->get_lat() );
     my $lat2 = deg2rad( $point->{lat} );
     my $dlon = deg2rad( $self->get_lon() - $point->{lon} );
@@ -173,10 +169,8 @@ the final bearing will differ from the initial bearing by varying degrees
 according to distance and latitude
 
 =cut
-sub final_bearing_to {
-    my ( $self, $point, $precision ) = @_;
 
-    $precision ||= -6;
+method final_bearing_to( HashRef[Num] $point!, Int $precision? = -6 ) returns (Num) {
     my $lat1 = deg2rad( $self->get_lat() );
     my $lat2 = deg2rad( $point->{lat} );
     my $dlon = deg2rad( $self->get_lon() - $point->{lon} );
@@ -197,10 +191,8 @@ the supplied point.
 see http://mathforum.org/library/drmath/view/51822.html for derivation
 
 =cut
-sub midpoint_to {
-    my ( $self, $point, $precision ) = @_;
 
-    $precision ||= -6;
+method midpoint_to( HashRef[Num] $point!, Int $precision? = -6 ) returns (HashRef[Num]) {
     my $lat1 = deg2rad( $self->get_lat() );
     my $lon1 = deg2rad( $self->get_lon() );
     my $lat2 = deg2rad( $point->{lat} );
@@ -229,10 +221,8 @@ destination is reached)
 see http://williams.best.vwh.net/avform.htm#LL
 
 =cut
-sub destination_point {
-    my ( $self, $brng, $dist, $precision ) = @_;
 
-    $precision ||= -6;
+method destination_point( Num $brng!, Num $dist!, Int $precision? = -6 ) returns (HashRef[Num]) {
     $dist = $dist / $self->get_radius();
     $brng = deg2rad( $brng );
     my $lat1 = deg2rad( $self->get_lat() );
@@ -257,10 +247,8 @@ Returns the boundry box min/max having the initial point defined as the center
 of the boundry box, given the widht and height
 
 =cut
-sub boundry_box {
-    my ( $self, $width, $height, $precision ) = @_;
 
-    $precision ||= -6;
+method boundry_box( Num $width!, Num $height!, Int $precision? = -6 ) returns (HashRef[Num]) {
     $height = $width if( !defined( $height ) );
     my @points = ();
     push @points, $self->destination_point( 315 , sqrt( ( ( $height/2 ) ** 2 ) + ( ( $width/2 ) ** 2 ) ), $precision );
@@ -299,10 +287,8 @@ vessels. New York to Beijing . close to the most extreme example possible
 see http://williams.best.vwh.net/avform.htm#Rhumb
 
 =cut
-sub rhumb_distance_to {
-    my ( $self, $point, $precision ) = @_;
 
-    $precision ||= -6;
+method rhumb_distance_to( HashRef[Num] $point!, Int $precision? = -6 ) returns (Num) {
     my $lat1 = deg2rad( $self->get_lat() );
     my $lat2 = deg2rad( $point->{lat} );
     my $dlat = deg2rad( $point->{lat} - $self->get_lat() );
@@ -326,10 +312,8 @@ Returns the bearing from this point to the supplied point along a rhumb line,
 in degrees
 
 =cut
-sub rhumb_bearing_to {
-    my ( $self, $point, $precision ) = @_;
 
-    $precision ||= -6;
+method rhumb_bearing_to( HashRef[Num] $point!, Int $precision? = -6 ) returns (Num) {
     my $lat1 = deg2rad( $self->get_lat() );
     my $lat2 = deg2rad( $point->{lat} );
     my $dlon = deg2rad( $point->{lon} - $self->get_lon() );
@@ -352,10 +336,8 @@ Returns the destination point from this point having travelled the given distanc
 (in km) on the given bearing along a rhumb line.
 
 =cut
-sub rhumb_destination_point {
-    my ( $self, $brng, $dist, $precision ) = @_;
 
-    $precision ||= -6;
+method rhumb_destination_point( Num $brng!, Num $dist!, Int $precision? = -6 ) returns (HashRef[Num]) {
     my $d = $dist / $self->get_radius();
     my $lat1 = deg2rad( $self->get_lat() );
     my $lon1 = deg2rad( $self->get_lon() );
@@ -388,10 +370,8 @@ Returns the point of intersection of two paths defined by point and bearing
 see http://williams.best.vwh.net/avform.htm#Intersection
 
 =cut
-sub intersection {
-    my ( $self, $brng1, $point, $brng2, $precision ) = @_;
 
-    $precision ||= -6;
+method intersection( Num $brng1!, HashRef[Num] $point!, Num $brng2!, Int $precision? = -6 ) returns (HashRef[Num]) {
     my $lat1 = deg2rad( $self->get_lat() );
     my $lon1 = deg2rad( $self->get_lon() );
     my $lat2 = deg2rad( $point->{lat} );
@@ -480,5 +460,8 @@ sub _fb_precision {
 
     return $mbf->bstr();
 }
+
+no Moose;
+__PACKAGE__->meta->make_immutable;
 
 1;

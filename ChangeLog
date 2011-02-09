@@ -1,5 +1,10 @@
 Revision history for Perl extension Geo::Calc
 
+version 0.03: Wed Feb  9 06:31:18 EST 2011
+
+	- speed impriovements
+	- changed from sub to method using MooseX::Method::Signatures
+
 version 0.02: Tue Feb  8 11:31:35 EST 2011
 
 	- updated the documenation (POD)
