@@ -1,5 +1,15 @@
 Revision history for Perl extension Geo::Calc
 
+version 0.04: Mon Feb 14 07:41:45 EST 2011
+
+	- fixed the boundry_box bug ( used the default 45 deg always )
+	- cleaned up the POD
+	- added distance_at and tests for it
+	- changed destination_point to destination_point_hs
+	- added destination_point using Vincenty inverse formula for ellipsoids
+	- new destination_point uses meters insted of km
+	- changed boundry_box to meters
+
 version 0.03: Wed Feb  9 06:31:18 EST 2011
 
 	- speed impriovements

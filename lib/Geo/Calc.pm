@@ -5,7 +5,7 @@
 package Geo::Calc;
 
 use vars '$VERSION';
-$VERSION = '0.03';
+$VERSION = '0.04';
 
 use Moose;
 use MooseX::FollowPBP;
@@ -27,8 +27,8 @@ Geo::Calc - simple geo calculator for points and distances
  my $brng          = $gc->bearing_to( { lat => 40.422371, lon => -3.704298 }, -6 );
  my $f_brng        = $gc->final_bearing_to( { lat => 40.422371, lon => -3.704298 }, -6 );
  my $midpoint      = $gc->midpoint_to( { lat => 40.422371, lon => -3.704298 }, -6 );
- my $destination   = $gc->destination_point( 90, 1, -6 ); # distance in km
- my $bbox          = $gc->boundry_box( 3, 4, -6 ); # in km
+ my $destination   = $gc->destination_point( 90, 1, -6 ); # distance in m
+ my $bbox          = $gc->boundry_box( 3, 4, -6 ); # in m
  my $r_distance    = $gc->rhumb_distance_to( { lat => 40.422371, lon => -3.704298 }, -6 );
  my $r_brng        = $gc->rhumb_bearing_to( { lat => 40.422371, lon => -3.704298 }, -6 );
  my $r_destination = $gc->rhumb_destination_point( 30, 1, -6 );
@@ -36,12 +36,12 @@ Geo::Calc - simple geo calculator for points and distances
 
 =head1 DESCRIPTION
 
- C<Geo::Calc> implements a variety of calculations for latitude/longitude points
+C<Geo::Calc> implements a variety of calculations for latitude/longitude points
 
- All these formulare are for calculations on the basis of a spherical earth
+All these formulare are for calculations on the basis of a spherical earth
 (ignoring ellipsoidal effects) which is accurate enough* for most purposes.
 
- [ In fact, the earth is very slightly ellipsoidal; using a spherical model
+[ In fact, the earth is very slightly ellipsoidal; using a spherical model
 gives errors typically up to 0.3% ].
 
 =head1 Geo::Calc->new()
@@ -50,7 +50,8 @@ gives errors typically up to 0.3% ].
  $gc = Geo::Calc->new( lat => 51.503269, lon => 0 ); # The O2 Arena in London
 
 Creates a new Geo::Calc object from a latitude and longitude. The default
-precision is -6 for all functions meaning that 6 deciamls
+deciaml precision is -6 for all functions => meaning by default it always
+returns the results with 6 deciamls
 
 Returns ref to a Geo::Calc object.
 
@@ -96,8 +97,8 @@ has 'radius' => (
 
 =head2 distance_to
 
- $gc->distance_to( $point, $precision )
- $gc->distance_to( { lat => 40.422371, lon => -3.704298 }, -6 )
+ $gc->distance_to( $point[, $precision] )
+ $gc->distance_to( { lat => 40.422371, lon => -3.704298 } )
 
 This uses the "haversine" formula to calculate great-circle distances between
 the two points - that is, the shortest distance over the earth's surface - 
@@ -111,7 +112,7 @@ angular distance in radians, and a is the square of half the chord length betwee
 the points).
 
 Returns with the distance using the precision defined or -6
-( -6 = 6 decimals after the dot ( eg 4.000001 ) )
+( -6 = 6 decimals ( eg 4.000001 ) )
 
 =cut
 
@@ -129,7 +130,7 @@ method distance_to( HashRef[Num] $point!, Int $precision? = -6 ) returns (Num) {
 
 =head2 bearing_to
 
- $gc->bearing_to( $point, $precision );
+ $gc->bearing_to( $point[, $precision] );
  $gc->bearing_to( { lat => 40.422371, lon => -3.704298 }, -6 );
 
 In general, your current heading will vary as you follow a great circle path
@@ -161,8 +162,8 @@ method bearing_to( HashRef[Num] $point!, Int $precision? = -6 ) returns (Num) {
 
 =head2 final_bearing_to
 
- my $f_brng = $gc->final_bearing_to( $point, $precision );
- my $f_brng = $gc->final_bearing_to( { lat => 40.422371, lon => -3.704298 }, -6 );
+ my $f_brng = $gc->final_bearing_to( $point[, $precision] );
+ my $f_brng = $gc->final_bearing_to( { lat => 40.422371, lon => -3.704298 } );
 
 Returns final bearing arriving at supplied destination point from this point;
 the final bearing will differ from the initial bearing by varying degrees
@@ -182,8 +183,8 @@ method final_bearing_to( HashRef[Num] $point!, Int $precision? = -6 ) returns (N
 
 =head2 midpoint_to
 
- $gc->midpoint_to( $point, $precision );
- $gc->midpoint_to( { lat => 40.422371, lon => -3.704298 }, -6 );
+ $gc->midpoint_to( $point[, $precision] );
+ $gc->midpoint_to( { lat => 40.422371, lon => -3.704298 } );
 
 Returns the midpoint along a great circle path between the initial point and
 the supplied point.
@@ -211,8 +212,82 @@ method midpoint_to( HashRef[Num] $point!, Int $precision? = -6 ) returns (HashRe
 
 =head2 destination_point
 
- $gc->destination_point( $bearing, $distance, $precision );
- $gc->destination_point( 90, 1, -6 ); # distance in km
+ $gc->destination_point( $bearing, $distance[, $precision] );
+ $gc->destination_point( 90, 1 ); # distance in meters
+
+Returns the destination point and the final bearing using Vincenty inverse
+formula for ellipsoids.
+
+=cut
+
+method destination_point ( Num $brng!, Num $s!, Int $precision? = -6 ) returns (HashRef[Num]) {
+    my $lat1 = $self->get_lat();
+    my $lon1 = $self->get_lon();
+
+    my $r_major = 6378137;           # Equatorial Radius, WGS84
+    my $r_minor = 6356752.314245179; # defined as constant
+    my $f       = 1/298.257223563;   # 1/f=( $r_major - $r_minor ) / $r_major
+
+    my $alpha1 = deg2rad( $brng );
+    my $sinAlpha1 = sin( $alpha1 );
+    my $cosAlpha1 = cos( $alpha1 );
+
+    my $tanU1 = ( 1 - $f ) * tan( deg2rad( $lat1 ) );
+
+    my $cosU1 = 1 / sqrt( (1 + $tanU1*$tanU1) );
+    my $sinU1 = $tanU1 * $cosU1;
+    my $sigma1 = atan2( $tanU1, $cosAlpha1 );
+    my $sinAlpha = $cosU1 * $sinAlpha1;
+    my $cosSqAlpha = 1 - $sinAlpha*$sinAlpha;
+
+    my $uSq = $cosSqAlpha * ( ( $r_major * $r_major ) - ( $r_minor * $r_minor ) ) / ( $r_minor * $r_minor );
+    my $A = 1 + $uSq/16384*(4096+$uSq*(-768+$uSq*(320-175*$uSq)));
+    my $B = $uSq/1024 * (256+$uSq*(-128+$uSq*(74-47*$uSq)));
+
+    my $sigma = $s / ($r_minor*$A);
+    my $sigmaP = pi2;
+
+    my $cos2SigmaM = cos(2*$sigma1 + $sigma);
+    my $sinSigma = sin($sigma);
+    my $cosSigma = cos($sigma);
+
+    while ( abs($sigma-$sigmaP) > 1e-12 ) {
+        $cos2SigmaM = cos(2*$sigma1 + $sigma);
+        $sinSigma = sin($sigma);
+        $cosSigma = cos($sigma);
+
+        my $deltaSigma = $B*$sinSigma*($cos2SigmaM+$B/4*($cosSigma*(-1+2*$cos2SigmaM*$cos2SigmaM)-
+          $B/6*$cos2SigmaM*(-3+4*$sinSigma*$sinSigma)*(-3+4*$cos2SigmaM*$cos2SigmaM)));
+        $sigmaP = $sigma;
+        $sigma = $s / ($r_minor*$A) + $deltaSigma;
+    }
+
+    my $tmp = $sinU1*$sinSigma - $cosU1*$cosSigma*$cosAlpha1;
+    my $lat2 = atan2( $sinU1*$cosSigma + $cosU1*$sinSigma*$cosAlpha1, (1-$f)*sqrt($sinAlpha*$sinAlpha + $tmp*$tmp) );
+
+    my $lambda = atan2($sinSigma*$sinAlpha1, $cosU1*$cosSigma - $sinU1*$sinSigma*$cosAlpha1);
+    my $C = $f/16*$cosSqAlpha*(4+$f*(4-3*$cosSqAlpha));
+    my $L = $lambda - (1-$C) * $f * $sinAlpha * ($sigma + $C*$sinSigma*($cos2SigmaM+$C*$cosSigma*(-1+2*$cos2SigmaM*$cos2SigmaM)));
+
+    my $lon2 = deg2rad( $lon1 )+$L;
+
+    # Normalize longitude so that its in range -PI to +PI
+    $lon2 -= pi2 while( $lon2 > pi );
+    $lon2 += pi2 while( $lon2 <= -(pi) );
+
+    my $revAz = atan2($sinAlpha, -$tmp);  # final bearing, if required
+
+    return {
+        lat => $self->_precision( rad2deg($lat2), $precision ),
+        lon => $self->_precision( rad2deg($lon2), $precision ),
+        final_bearing => $self->_precision( rad2deg($revAz), $precision )
+    };
+}
+
+=head2 destination_point_hs
+
+ $gc->destination_point_hs( $bearing, $distance[, $precision] );
+ $gc->destination_point_hs( 90, 1 ); # distance in km
 
 Returns the destination point from this point having travelled the given
 distance (in km) on the given initial bearing (bearing may vary before
@@ -222,7 +297,7 @@ see http://williams.best.vwh.net/avform.htm#LL
 
 =cut
 
-method destination_point( Num $brng!, Num $dist!, Int $precision? = -6 ) returns (HashRef[Num]) {
+method destination_point_hs( Num $brng!, Num $dist!, Int $precision? = -6 ) returns (HashRef[Num]) {
     $dist = $dist / $self->get_radius();
     $brng = deg2rad( $brng );
     my $lat1 = deg2rad( $self->get_lat() );
@@ -240,8 +315,9 @@ method destination_point( Num $brng!, Num $dist!, Int $precision? = -6 ) returns
 
 =head2 boundry_box
 
- $gc->boundry_box( $width, $height, $precision ); # in km
- $gc->boundry_box( 3, 4, -6 ); # in km
+ $gc->boundry_box( $width[, $height[, $precision]] ); # in km
+ $gc->boundry_box( 3, 4 ); # will generate a 3x4m box around the point
+ $gc->boundry_box( 1 ); # will generate a 2x2m box around the point (radius)
 
 Returns the boundry box min/max having the initial point defined as the center
 of the boundry box, given the widht and height
@@ -250,22 +326,30 @@ of the boundry box, given the widht and height
 
 method boundry_box( Num $width!, Num $height!, Int $precision? = -6 ) returns (HashRef[Num]) {
     $height = $width if( !defined( $height ) );
+
+    if( !defined( $height ) ) {
+        $width *= 2;
+        $height = $width;
+    }
+
     my @points = ();
-    push @points, $self->destination_point( 315 , sqrt( ( ( $height/2 ) ** 2 ) + ( ( $width/2 ) ** 2 ) ), $precision );
-    push @points, $self->destination_point( 135 , sqrt( ( ( $height/2 ) ** 2 ) + ( ( $width/2 ) ** 2 ) ), $precision );
+    push @points, $self->destination_point( 0,   $height / 2, $precision );
+    push @points, $self->destination_point( 90,  $width  / 2, $precision );
+    push @points, $self->destination_point( 180, $height / 2, $precision );
+    push @points, $self->destination_point( 270, $width  / 2, $precision );
 
     return {
-        lat_min => $points[0]->{lat},
-        lon_min => $points[0]->{lon},
-        lat_max => $points[1]->{lat},
+        lat_min => $points[2]->{lat},
+        lon_min => $points[3]->{lon},
+        lat_max => $points[0]->{lat},
         lon_max => $points[1]->{lon},
     };
 }
 
 =head2 rhumb_distance_to
 
- $gc->rhumb_distance_to( $point, $precision );
- $gc->rhumb_distance_to( { lat => 40.422371, lon => -3.704298 }, -6 );
+ $gc->rhumb_distance_to( $point[, $precision] );
+ $gc->rhumb_distance_to( { lat => 40.422371, lon => -3.704298 } );
 
 Returns the distance from this point to the supplied point, in km, travelling
 along a rhumb line.
@@ -305,8 +389,8 @@ method rhumb_distance_to( HashRef[Num] $point!, Int $precision? = -6 ) returns (
 
 =head2 rhumb_bearing_to
 
- $gc->rhumb_bearing_to( $point, $precision );
- $gc->rhumb_bearing_to( { lat => 40.422371, lon => -3.704298 }, -6 );
+ $gc->rhumb_bearing_to( $point[, $precision] );
+ $gc->rhumb_bearing_to( { lat => 40.422371, lon => -3.704298 } );
 
 Returns the bearing from this point to the supplied point along a rhumb line,
 in degrees
@@ -329,8 +413,8 @@ method rhumb_bearing_to( HashRef[Num] $point!, Int $precision? = -6 ) returns (N
 
 =head2 rhumb_destination_point
 
- $gc->rhumb_destination_point( $brng, $distance, $precision );
- $gc->rhumb_destination_point( 30, 1, -6 );
+ $gc->rhumb_destination_point( $brng, $distance[, $precision] );
+ $gc->rhumb_destination_point( 30, 1 );
 
 Returns the destination point from this point having travelled the given distance
 (in km) on the given bearing along a rhumb line.
@@ -362,8 +446,8 @@ method rhumb_destination_point( Num $brng!, Num $dist!, Int $precision? = -6 ) r
 
 =head2 intersection
 
- $gc->intersection( $brng1, $point, $brng2, $precision );
- $gc->intersection( 90, { lat => 40.422371, lon => -3.704298 }, 180, -6 );
+ $gc->intersection( $brng1, $point, $brng2[, $precision] );
+ $gc->intersection( 90, { lat => 40.422371, lon => -3.704298 }, 180 );
 
 Returns the point of intersection of two paths defined by point and bearing
 
@@ -416,6 +500,35 @@ method intersection( Num $brng1!, HashRef[Num] $point!, Num $brng2!, Int $precis
     $lon3 += pi2 while( $lon3 <= -(pi) );
 
     return { lat => $self->_precision( rad2deg($lat3), $precision ), lon => $self->_precision( rad2deg($lon3), $precision ) };
+}
+
+=head2 distance_at
+
+Returns the distance in meters for 1deg of latitude and longitude at the
+specified latitude
+
+ my $m_distance = $self->distance_at([$precision]);
+ my $m_distance = $self->distance_at();
+ # at lat 2 with precision -6 returns { m_lat => 110575.625009, m_lon => 111252.098718 }
+
+=cut
+
+method distance_at(Int $precision? = -6 ) returns (HashRef[Num]) {
+    my $lat = deg2rad( $self->get_lat() );
+
+    # Set up "Constants"
+    my $m1 = 111132.92; # latitude calculation term 1
+    my $m2 = -559.82;   # latitude calculation term 2
+    my $m3 = 1.175;     # latitude calculation term 3
+    my $m4 = -0.0023;   # latitude calculation term 4
+    my $p1 = 111412.84; # longitude calculation term 1
+    my $p2 = -93.5;     # longitude calculation term 2
+    my $p3 = 0.118;     # longitude calculation term 3 
+
+    return {
+        m_lat => $self->_precision( $m1 + ($m2 * cos(2 * $lat)) + ($m3 * cos(4 * $lat)) + ( $m4 * cos(6 * $lat) ), $precision ),
+        m_lon => $self->_precision( ( $p1 * cos($lat)) + ($p2 * cos(3 * $lat)) + ($p3 * cos(5 * $lat) ), $precision ),
+    }
 }
 
 sub _precision {
