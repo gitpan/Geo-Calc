@@ -1,5 +1,14 @@
 Revision history for Perl extension Geo::Calc
 
+version 0.11: Mon Jun 27 18:23:46 EEST 2011
+	- fixed boundry_box bug
+	- fixed initial and final bearing bugs
+	- added distance units ( defaults to meters )
+	- fixed number handeling bug (in precision functions)
+	- now returns numbers not strings
+	- added more tests
+	- code cleaning
+
 version 0.04: Mon Feb 14 07:41:45 EST 2011
 
 	- fixed the boundry_box bug ( used the default 45 deg always )

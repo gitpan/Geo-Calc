@@ -1,11 +1,11 @@
-# Copyrights 2011 by Sorin Pop.
+# Copyrights 2011 by Sorin Alexandru Pop.
 # For other contributors see ChangeLog.
 # See the manual pages for details on the licensing terms.
 
 package Geo::Calc;
 
 use vars '$VERSION';
-$VERSION = '0.04';
+$VERSION = '0.11';
 
 use Moose;
 use MooseX::FollowPBP;
@@ -13,6 +13,9 @@ use MooseX::Method::Signatures;
 
 use Math::Trig qw(:pi asin acos tan deg2rad rad2deg);
 use Math::BigFloat;
+use Math::BigInt;
+use Math::Units qw(convert);
+use POSIX qw(modf fmod);
 
 =head1 NAME
 
@@ -27,8 +30,8 @@ Geo::Calc - simple geo calculator for points and distances
  my $brng          = $gc->bearing_to( { lat => 40.422371, lon => -3.704298 }, -6 );
  my $f_brng        = $gc->final_bearing_to( { lat => 40.422371, lon => -3.704298 }, -6 );
  my $midpoint      = $gc->midpoint_to( { lat => 40.422371, lon => -3.704298 }, -6 );
- my $destination   = $gc->destination_point( 90, 1, -6 ); # distance in m
- my $bbox          = $gc->boundry_box( 3, 4, -6 ); # in m
+ my $destination   = $gc->destination_point( 90, 1, -6 );
+ my $bbox          = $gc->boundry_box( 3, 4, -6 );
  my $r_distance    = $gc->rhumb_distance_to( { lat => 40.422371, lon => -3.704298 }, -6 );
  my $r_brng        = $gc->rhumb_bearing_to( { lat => 40.422371, lon => -3.704298 }, -6 );
  my $r_destination = $gc->rhumb_destination_point( 30, 1, -6 );
@@ -47,11 +50,14 @@ gives errors typically up to 0.3% ].
 =head1 Geo::Calc->new()
 
  $gc = Geo::Calc->new( lat => 40.417875, lon => -3.710205 ); # Somewhere in Madrid
- $gc = Geo::Calc->new( lat => 51.503269, lon => 0 ); # The O2 Arena in London
+ $gc = Geo::Calc->new( lat => 51.503269, lon => 0, units => 'k-m' ); # The O2 Arena in London
 
 Creates a new Geo::Calc object from a latitude and longitude. The default
 deciaml precision is -6 for all functions => meaning by default it always
-returns the results with 6 deciamls
+returns the results with 6 deciamls.
+
+The default unit distance is 'm' (meter), but you cand define another unit using 'units'.
+Accepted values are: 'm' (meters), 'k-m' (kilometers), 'yd' (yards), 'ft' (feet) and 'mi' (miles)
 
 Returns ref to a Geo::Calc object.
 
@@ -93,6 +99,38 @@ has 'radius' => (
     default  => '6371',
 );
 
+has 'supported_units' => (
+    is       => 'ro',
+    isa      => 'ArrayRef',
+    lazy     => 0,
+    builder  => '_build_supported_units',
+);
+
+has 'units' => (
+    is       => 'ro',
+    isa      => 'Str',
+    lazy     => 0,
+    builder  => '_build_default_unit',
+);
+
+sub _build_supported_units {
+    my $self = shift;
+
+    return [ 'm', 'k-m', 'yd', 'ft', 'mi' ];
+}
+
+sub _build_default_unit {
+    my $self = shift;
+
+    if ( !defined( $self->{units} ) ) {
+        return 'm'; # Defaults to meters
+    } elsif( @{$self->get_supported_units()} ~~ $self->{units} ) {
+        return $self->{units};
+    } else {
+        die sprintf( 'Unsupported unit "%s"! Supported units are: %s', $self->{units}, join(', ', @{$self->get_supported_units()} ) );
+    }
+}
+
 =head1 METHODS
 
 =head2 distance_to
@@ -101,7 +139,7 @@ has 'radius' => (
  $gc->distance_to( { lat => 40.422371, lon => -3.704298 } )
 
 This uses the "haversine" formula to calculate great-circle distances between
-the two points - that is, the shortest distance over the earth's surface - 
+the two points - that is, the shortest distance over the earth's surface -
 giving an `as-the-crow-flies` distance between the points (ignoring any hills!)
 
 The haversine formula `remains particularly well-conditioned for numerical
@@ -117,15 +155,18 @@ Returns with the distance using the precision defined or -6
 =cut
 
 method distance_to( HashRef[Num] $point!, Int $precision? = -6 ) returns (Num) {
-    my $lat1 = deg2rad( $self->get_lat() );
-    my $lon1 = deg2rad( $self->get_lon() );
-    my $lat2 = deg2rad( $point->{lat} );
-    my $lon2 = deg2rad( $point->{lon} );
+    my ( $lat1, $lon1, $lat2, $lon2 ) = (
+            Math::Trig::deg2rad( $self->get_lat() ),
+            Math::Trig::deg2rad( $self->get_lon() ),
+            Math::Trig::deg2rad( $point->{lat} ),
+            Math::Trig::deg2rad( $point->{lon} ),
+    );
 
     my $t = sin( ($lat2 - $lat1)/2 ) ** 2 + ( cos( $lat1 ) ** 2 ) * ( sin( ( $lon2 - $lon1 )/2 ) ** 2 );
     my $d = $self->get_radius * ( 2 * atan2( sqrt($t), sqrt(1-$t) ) );
 
-    return $self->_precision( $d, $precision );
+    # Convert from kilometers to the desired distance unit
+    return $self->_precision( Math::Units::convert( $d, 'k-m', $self->get_units() ), $precision );
 }
 
 =head2 bearing_to
@@ -151,13 +192,15 @@ see http://williams.best.vwh.net/avform.htm#Crs
 =cut
 
 method bearing_to( HashRef[Num] $point!, Int $precision? = -6 ) returns (Num) {
-    my $lat1 = deg2rad( $self->get_lat() );
-    my $lat2 = deg2rad( $point->{lat} );
-    my $dlon = deg2rad( $self->get_lon() - $point->{lon} );
+    my ( $lat1, $lat2, $dlon ) = (
+            Math::Trig::deg2rad( $self->get_lat() ),
+            Math::Trig::deg2rad( $point->{lat} ),
+            Math::Trig::deg2rad( $self->get_lon() - $point->{lon} ),
+    );
 
     my $brng = atan2( sin( $dlon ) * cos( $lat2 ), ( cos( $lat1 ) * sin( $lat2 ) ) - ( sin( $lat1 ) * cos( $lat2 ) * cos( $dlon ) ) );
 
-    return $self->_ib_precision( rad2deg( $brng ), $precision );
+    return $self->_ib_precision( $brng, $precision, -1 );
 }
 
 =head2 final_bearing_to
@@ -172,13 +215,16 @@ according to distance and latitude
 =cut
 
 method final_bearing_to( HashRef[Num] $point!, Int $precision? = -6 ) returns (Num) {
-    my $lat1 = deg2rad( $self->get_lat() );
-    my $lat2 = deg2rad( $point->{lat} );
-    my $dlon = deg2rad( $self->get_lon() - $point->{lon} );
+
+    my ( $lat1, $lat2, $dlon ) = (
+            Math::Trig::deg2rad( $point->{lat} ),
+            Math::Trig::deg2rad( $self->get_lat() ),
+            - Math::Trig::deg2rad( $point->{lon} - $self->get_lon() )
+    );
 
     my $brng = atan2( sin( $dlon ) * cos( $lat2 ), ( cos( $lat1 ) * sin( $lat2 ) ) - ( sin( $lat1 ) * cos( $lat2 ) * cos( $dlon ) ) );
 
-    return $self->_fb_precision( rad2deg( $brng ), $precision );
+    return $self->_fb_precision( $brng, $precision );
 }
 
 =head2 midpoint_to
@@ -194,26 +240,29 @@ see http://mathforum.org/library/drmath/view/51822.html for derivation
 =cut
 
 method midpoint_to( HashRef[Num] $point!, Int $precision? = -6 ) returns (HashRef[Num]) {
-    my $lat1 = deg2rad( $self->get_lat() );
-    my $lon1 = deg2rad( $self->get_lon() );
-    my $lat2 = deg2rad( $point->{lat} );
-    my $dlon = deg2rad( $point->{lon} - $self->get_lon() );
+    my ( $lat1, $lon1, $lat2, $dlon ) = (
+            Math::Trig::deg2rad( $self->get_lat() ),
+            Math::Trig::deg2rad( $self->get_lon() ),
+            Math::Trig::deg2rad( $point->{lat} ),
+            Math::Trig::deg2rad( $point->{lon} - $self->get_lon() ),
+    );
 
     my $bx = cos( $lat2 ) * cos( $dlon );
     my $by = cos( $lat2 ) * sin( $dlon );
 
     my $lat3 = atan2( sin( $lat1 ) + sin ( $lat2 ), sqrt( ( ( cos( $lat1 ) + $bx ) ** 2 ) + ( $by ** 2 ) ) );
-    my $lon3 = $lon1 + atan2( $by, cos( $lat1 ) + $bx );
-    $lon3 -= pi2 while( $lon3 > pi );
-    $lon3 += pi2 while( $lon3 <= -(pi) );
+    my $lon3 = POSIX::fmod( $lon1 + atan2( $by, cos( $lat1 ) + $bx ) + ( pi * 3 ), pi2 ) - pi;
 
-    return { lat => $self->_precision( rad2deg($lat3), $precision ), lon => $self->_precision( rad2deg($lon3), $precision ) };
+    return {
+        lat => $self->_precision( Math::Trig::rad2deg($lat3), $precision ),
+        lon => $self->_precision( Math::Trig::rad2deg($lon3), $precision ),
+    };
 }
 
 =head2 destination_point
 
  $gc->destination_point( $bearing, $distance[, $precision] );
- $gc->destination_point( 90, 1 ); # distance in meters
+ $gc->destination_point( 90, 1 );
 
 Returns the destination point and the final bearing using Vincenty inverse
 formula for ellipsoids.
@@ -224,15 +273,17 @@ method destination_point ( Num $brng!, Num $s!, Int $precision? = -6 ) returns (
     my $lat1 = $self->get_lat();
     my $lon1 = $self->get_lon();
 
+    $s = Math::Units::convert( $s, $self->get_units(), 'm' );
+
     my $r_major = 6378137;           # Equatorial Radius, WGS84
     my $r_minor = 6356752.314245179; # defined as constant
     my $f       = 1/298.257223563;   # 1/f=( $r_major - $r_minor ) / $r_major
 
-    my $alpha1 = deg2rad( $brng );
+    my $alpha1 = Math::Trig::deg2rad( $brng );
     my $sinAlpha1 = sin( $alpha1 );
     my $cosAlpha1 = cos( $alpha1 );
 
-    my $tanU1 = ( 1 - $f ) * tan( deg2rad( $lat1 ) );
+    my $tanU1 = ( 1 - $f ) * tan( Math::Trig::deg2rad( $lat1 ) );
 
     my $cosU1 = 1 / sqrt( (1 + $tanU1*$tanU1) );
     my $sinU1 = $tanU1 * $cosU1;
@@ -269,48 +320,48 @@ method destination_point ( Num $brng!, Num $s!, Int $precision? = -6 ) returns (
     my $C = $f/16*$cosSqAlpha*(4+$f*(4-3*$cosSqAlpha));
     my $L = $lambda - (1-$C) * $f * $sinAlpha * ($sigma + $C*$sinSigma*($cos2SigmaM+$C*$cosSigma*(-1+2*$cos2SigmaM*$cos2SigmaM)));
 
-    my $lon2 = deg2rad( $lon1 )+$L;
-
     # Normalize longitude so that its in range -PI to +PI
-    $lon2 -= pi2 while( $lon2 > pi );
-    $lon2 += pi2 while( $lon2 <= -(pi) );
-
+    my $lon2 = POSIX::fmod( Math::Trig::deg2rad( $lon1 ) + $L + ( pi * 3 ), pi2 ) - pi;
     my $revAz = atan2($sinAlpha, -$tmp);  # final bearing, if required
 
     return {
-        lat => $self->_precision( rad2deg($lat2), $precision ),
-        lon => $self->_precision( rad2deg($lon2), $precision ),
-        final_bearing => $self->_precision( rad2deg($revAz), $precision )
+        lat => $self->_precision( Math::Trig::rad2deg($lat2), $precision ),
+        lon => $self->_precision( Math::Trig::rad2deg($lon2), $precision ),
+        final_bearing => $self->_precision( Math::Trig::rad2deg($revAz), $precision ),
     };
 }
 
 =head2 destination_point_hs
 
  $gc->destination_point_hs( $bearing, $distance[, $precision] );
- $gc->destination_point_hs( 90, 1 ); # distance in km
+ $gc->destination_point_hs( 90, 1 );
 
 Returns the destination point from this point having travelled the given
-distance (in km) on the given initial bearing (bearing may vary before
-destination is reached)
+distance on the given initial bearing (bearing may vary before destination is
+reached)
 
 see http://williams.best.vwh.net/avform.htm#LL
 
 =cut
 
 method destination_point_hs( Num $brng!, Num $dist!, Int $precision? = -6 ) returns (HashRef[Num]) {
+    $dist = Math::Units::convert( $dist, $self->get_units(), 'k-m' );
+
     $dist = $dist / $self->get_radius();
-    $brng = deg2rad( $brng );
-    my $lat1 = deg2rad( $self->get_lat() );
-    my $lon1 = deg2rad( $self->get_lon() );
+    $brng = Math::Trig::deg2rad( $brng );
+    my $lat1 = Math::Trig::deg2rad( $self->get_lat() );
+    my $lon1 = Math::Trig::deg2rad( $self->get_lon() );
 
     my $lat2 = asin( sin( $lat1 ) * cos( $dist ) + cos( $lat1 ) * sin( $dist ) * cos( $brng ) );
     my $lon2 = $lon1 + atan2( sin( $brng ) * sin( $dist ) * cos( $lat1 ), cos( $dist ) - sin( $lat1 ) * sin ( $lat2 ) );
 
     # Normalize longitude so that its in range -PI to +PI
-    $lon2 -= pi2 while( $lon2 > pi );
-    $lon2 += pi2 while( $lon2 <= -(pi) );
+    $lon2 = POSIX::fmod( Math::Trig::deg2rad( $lon2 ) + ( pi * 3 ), pi2 ) - pi;
 
-    return { lat => $self->_precision( rad2deg($lat2), $precision ), lon => $self->_precision( rad2deg($lon2), $precision ) };
+    return {
+        lat => $self->_precision( Math::Trig::rad2deg($lat2), $precision ),
+        lon => $self->_precision( Math::Trig::rad2deg($lon2), $precision ),
+    };
 }
 
 =head2 boundry_box
@@ -324,10 +375,12 @@ of the boundry box, given the widht and height
 
 =cut
 
-method boundry_box( Num $width!, Num $height!, Int $precision? = -6 ) returns (HashRef[Num]) {
-    $height = $width if( !defined( $height ) );
-
-    if( !defined( $height ) ) {
+method boundry_box( Num $width!, Maybe[Num] $height?, Int $precision? = -6 ) returns (HashRef[Num]) {
+    if( !defined( $precision ) ) {
+        $width *= 2;
+        $height = $width;
+        $precision = -6;
+    } elsif( !defined( $height ) ) {
         $width *= 2;
         $height = $width;
     }
@@ -373,10 +426,12 @@ see http://williams.best.vwh.net/avform.htm#Rhumb
 =cut
 
 method rhumb_distance_to( HashRef[Num] $point!, Int $precision? = -6 ) returns (Num) {
-    my $lat1 = deg2rad( $self->get_lat() );
-    my $lat2 = deg2rad( $point->{lat} );
-    my $dlat = deg2rad( $point->{lat} - $self->get_lat() );
-    my $dlon = abs( deg2rad( $point->{lon} - $self->get_lon() ) );
+    my ( $lat1, $lat2, $dlat, $dlon ) = (
+            Math::Trig::deg2rad( $self->get_lat() ),
+            Math::Trig::deg2rad( $point->{lat} ),
+            Math::Trig::deg2rad( $point->{lat} - $self->get_lat() ),
+            abs( Math::Trig::deg2rad( $point->{lon} - $self->get_lon() ) ),
+    );
 
     my $dphi = log( tan( $lat2/2 + pip4 ) / tan( $lat1/2 + pip4 ) );
     my $q = ( $dphi != 0 ) ? $dlat/$dphi : cos($lat1);# E-W line gives dPhi=0
@@ -384,7 +439,7 @@ method rhumb_distance_to( HashRef[Num] $point!, Int $precision? = -6 ) returns (
 
     my $dist = sqrt( ( $dlat ** 2 ) + ( $q ** 2 ) * ( $dlon ** 2 ) ) * $self->get_radius();
 
-    return $self->_precision( $dist, $precision );
+    return $self->_precision( Math::Units::convert( $dist, 'k-m', $self->get_units() ), $precision );
 }
 
 =head2 rhumb_bearing_to
@@ -398,17 +453,19 @@ in degrees
 =cut
 
 method rhumb_bearing_to( HashRef[Num] $point!, Int $precision? = -6 ) returns (Num) {
-    my $lat1 = deg2rad( $self->get_lat() );
-    my $lat2 = deg2rad( $point->{lat} );
-    my $dlon = deg2rad( $point->{lon} - $self->get_lon() );
-
+    my ( $lat1, $lat2, $dlon ) = (
+            Math::Trig::deg2rad( $self->get_lat() ),
+            Math::Trig::deg2rad( $point->{lat} ),
+            Math::Trig::deg2rad( $point->{lon} - $self->get_lon() ),
+    );
 
     my $dphi = log( tan( $lat2/2 + pip4 ) / tan( $lat1/2 + pip4 ) );
     if( abs( $dlon ) > pi ) {
         $dlon = ( $dlon > 0 ) ? -(pi2-$dlon) : (pi2+$dlon);
     }
 
-    return $self->_ib_precision( rad2deg( atan2( $dlon, $dphi ) ), $precision );
+    return $self->_ib_precision( atan2( $dlon, $dphi ), $precision, 1 );
+#    return $self->_ib_precision( Math::Trig::rad2deg( atan2( $dlon, $dphi ) ), $precision );
 }
 
 =head2 rhumb_destination_point
@@ -422,25 +479,33 @@ Returns the destination point from this point having travelled the given distanc
 =cut
 
 method rhumb_destination_point( Num $brng!, Num $dist!, Int $precision? = -6 ) returns (HashRef[Num]) {
-    my $d = $dist / $self->get_radius();
-    my $lat1 = deg2rad( $self->get_lat() );
-    my $lon1 = deg2rad( $self->get_lon() );
-    $brng = deg2rad( $brng );
+    $dist = Math::Units::convert( $dist, $self->get_units(), 'k-m' );
 
-    my $lat2 = $lat1 + $d * cos( $brng );
+    my $d = $dist / $self->get_radius();
+    my ( $lat1, $lon1 );
+    ( $lat1, $lon1 , $brng ) = ( 
+            Math::Trig::deg2rad( $self->get_lat() ),
+            Math::Trig::deg2rad( $self->get_lon() ),
+            Math::Trig::deg2rad( $brng ),
+    );
+
+    my $lat2 = $lat1 + ( $d * cos( $brng ) );
+
     my $dlat = $lat2 - $lat1;
     my $dphi = log( tan( $lat2/2 + pip4 ) / tan( $lat1/2 + pip4 ) );
     my $q = ( $dphi != 0 ) ? $dlat/$dphi : cos($lat1);# E-W line gives dPhi=0
     my $dlon = $d * sin( $brng ) / $q;
 
+    # check for some daft bugger going past the pole
     if ( abs( $lat2 ) > pip2 ) {
         $lat2 = ( $lat2 > 0 ) ? pi-$lat2 : -(pi-$lat2);
     }
-    my $lon2 = $lon1 + $dlon;
-    $lon2 -= pi2 while( $lon2 > pi );
-    $lon2 += pi2 while( $lon2 <= -(pi) );
+    my $lon2 = POSIX::fmod( $lon1 + $dlon + ( pi * 3 ), pi2 ) - pi;
 
-    return { lat => $self->_precision( rad2deg($lat2), $precision ), lon => $self->_precision( rad2deg($lon2), $precision ) };
+    return {
+        lat => $self->_precision( Math::Trig::rad2deg($lat2), $precision ),
+        lon => $self->_precision( Math::Trig::rad2deg($lon2), $precision ),
+    };
 }
 
 
@@ -456,12 +521,14 @@ see http://williams.best.vwh.net/avform.htm#Intersection
 =cut
 
 method intersection( Num $brng1!, HashRef[Num] $point!, Num $brng2!, Int $precision? = -6 ) returns (HashRef[Num]) {
-    my $lat1 = deg2rad( $self->get_lat() );
-    my $lon1 = deg2rad( $self->get_lon() );
-    my $lat2 = deg2rad( $point->{lat} );
-    my $lon2 = deg2rad( $point->{lon} );
-    my $brng13 = deg2rad( $brng1 );
-    my $brng23 = deg2rad( $brng2 );
+    my ( $lat1, $lon1, $lat2, $lon2, $brng13, $brng23 ) = (
+            Math::Trig::deg2rad( $self->get_lat() ),
+            Math::Trig::deg2rad( $self->get_lon() ),
+            Math::Trig::deg2rad( $point->{lat} ),
+            Math::Trig::deg2rad( $point->{lon} ),
+            Math::Trig::deg2rad( $brng1 ),
+            Math::Trig::deg2rad( $brng2 ),
+    );
     my $dlat = $lat2 - $lat1;
     my $dlon = $lon2 - $lon1;
 
@@ -481,12 +548,8 @@ method intersection( Num $brng1!, HashRef[Num] $point!, Num $brng2!, Int $precis
         $brng21 = $brngb;
     }
 
-    my $alpha1 = $brng13 - $brng12;
-    my $alpha2 = $brng21 - $brng23;
-    $alpha1 -= pi2 while( $alpha1 > pi );
-    $alpha1 += pi2 while( $alpha1 <= -(pi) );
-    $alpha2 -= pi2 while( $alpha2 > pi );
-    $alpha2 += pi2 while( $alpha2 <= -(pi) );
+    my $alpha1 = POSIX::fmod( $brng13 - $brng12 + ( pi * 3 ), pi2 ) - pi;
+    my $alpha2 = POSIX::fmod( $brng21 - $brng23 + ( pi * 3 ), pi2 ) - pi;
 
     return undef if( ( sin( $alpha1 ) == 0 ) and ( sin( $alpha2 ) == 0 ) ); #infinite intersections
     return undef if( sin( $alpha1 ) * sin( $alpha2 ) < 0 ); #ambiguous intersection
@@ -495,11 +558,12 @@ method intersection( Num $brng1!, HashRef[Num] $point!, Num $brng2!, Int $precis
     my $dist13 = atan2( sin( $dist12 ) * sin( $alpha1 ) * sin( $alpha2 ), cos( $alpha2 ) + cos( $alpha1 ) * cos( $alpha3 ) );
     my $lat3 = asin( sin( $lat1 ) * cos( $dist13 ) + cos( $lat1 ) * sin( $dist13 ) * cos( $brng13 ) );
     my $dlon13 = atan2( sin( $brng13 ) * sin( $dist13 ) * cos( $lat1 ), cos( $dist13 ) - sin( $lat1 ) * sin( $lat3 ) );
-    my $lon3 = $lon1 + $dlon13;
-    $lon3 -= pi2 while( $lon3 > pi );
-    $lon3 += pi2 while( $lon3 <= -(pi) );
+    my $lon3 = POSIX::fmod( $lon1 + $dlon13 + ( pi * 3 ), pi2 ) - pi;
 
-    return { lat => $self->_precision( rad2deg($lat3), $precision ), lon => $self->_precision( rad2deg($lon3), $precision ) };
+    return {
+        lat => $self->_precision( Math::Trig::rad2deg($lat3), $precision ),
+        lon => $self->_precision( Math::Trig::rad2deg($lon3), $precision ),
+    };
 }
 
 =head2 distance_at
@@ -539,23 +603,20 @@ sub _precision {
     my $mbf = Math::BigFloat->new( $number );
     $mbf->precision( $precision );
 
-    return $mbf->bstr();
+    return $mbf->bstr() + 0;
 }
 
 sub _ib_precision {
-    my ( $self, $brng, $precision ) = @_;
+    my ( $self, $brng, $precision, $mul ) = @_;
+
+    $mul ||= 1;
 
     die "Error: Private method called" unless (caller)[0]->isa( ref($self) );
 
-    my $mbf;
-    if( $brng =~ m/\./ ) {
-        $mbf = Math::BigFloat->new( ( $brng + 360 ) % 360 .'.'. (split('\.', $brng ) )[1] );
-    } else {
-        $mbf = Math::BigFloat->new( ( $brng + 360 ) % 360 );
-    }
+    my $mbf = Math::BigFloat->new( POSIX::fmod( $mul * ( Math::Trig::rad2deg( $brng ) ) + 360, 360 ) );
     $mbf->precision( $precision );
 
-    return $mbf->bstr();
+    return $mbf->bstr() + 0;
 }
 
 sub _fb_precision {
@@ -563,18 +624,35 @@ sub _fb_precision {
 
     die "Error: Private method called" unless (caller)[0]->isa( ref($self) );
 
-    my $mbf;
-    if( $brng =~ m/\./ ) {
-        $mbf = Math::BigFloat->new( ( $brng + 180 ) % 360 .'.'. (split('\.', $brng ) )[1] );
-    } else {
-        $mbf = Math::BigFloat->new( ( $brng + 180 ) % 360 );
-    }
+    my $mbf = Math::BigFloat->new( POSIX::fmod( ( Math::Trig::rad2deg( $brng ) ) + 180, 360 ) );
     $mbf->precision( $precision );
 
-    return $mbf->bstr();
+    return $mbf->bstr() + 0;
 }
 
 no Moose;
 __PACKAGE__->meta->make_immutable;
+
+=head1 BUGS
+
+All complex software has bugs lurking in it, and this module is no
+exception.
+
+Please report any bugs through the web interface at L<http://rt.cpan.org>.
+
+=head1 AUTHOR
+
+Sorin Alexandru Pop C<< <sorin.pop@evozon.com> >>
+
+=head1 LICENSE
+
+This program is free software; you can redistribute it and/or
+modify it under the same terms as Perl itself.
+
+See L<http://www.perl.com/perl/misc/Artistic.html>
+
+=cut
+
+__END__
 
 1;
