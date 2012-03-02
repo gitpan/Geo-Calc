@@ -1,5 +1,8 @@
 Revision history for Perl extension Geo::Calc
 
+version 0.12: Thu Mar  1 12:30:22 EEST 2011
+	- fixed bug to work on perl 5.8.x
+
 version 0.11: Mon Jun 27 18:23:46 EEST 2011
 	- fixed boundry_box bug
 	- fixed initial and final bearing bugs

@@ -5,7 +5,7 @@
 package Geo::Calc;
 
 use vars '$VERSION';
-$VERSION = '0.11';
+$VERSION = '0.12';
 
 use Moose;
 use MooseX::FollowPBP;
@@ -124,9 +124,10 @@ sub _build_default_unit {
 
     if ( !defined( $self->{units} ) ) {
         return 'm'; # Defaults to meters
-    } elsif( @{$self->get_supported_units()} ~~ $self->{units} ) {
-        return $self->{units};
-    } else {
+    } else { # As smartmatch does not work on 5.x < 10
+        foreach( @{ $self->get_supported_units() } ) {
+            return $_ if( $_ eq $self->{units} );
+        }
         die sprintf( 'Unsupported unit "%s"! Supported units are: %s', $self->{units}, join(', ', @{$self->get_supported_units()} ) );
     }
 }
@@ -642,7 +643,7 @@ Please report any bugs through the web interface at L<http://rt.cpan.org>.
 
 =head1 AUTHOR
 
-Sorin Alexandru Pop C<< <sorin.pop@evozon.com> >>
+Sorin Alexandru Pop C<< <asp@cpan.org> >>
 
 =head1 LICENSE
 
